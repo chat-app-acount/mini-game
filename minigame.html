@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>みんなでパーティーゲーム（オンライン）</title>
+<meta name="description" content="URLを送るだけ。ワードウルフ・数字ならべ・ぴったり10秒を、それぞれのスマホでオンラインで遊べます。">
+<style>
+:root{--bg:#f1eefe;--ink:#231942;--sub:#5f5780;--card:#fff;--coral:#ff5d73;--sun:#ffc233;--mint:#2ec4a6;--line:#d6cff2}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:17px/1.7 "Hiragino Sans","Yu Gothic UI","Noto Sans JP",system-ui,sans-serif}
+main{max-width:520px;margin:0 auto;padding:24px 16px 56px;min-height:100vh}
+h1{font-size:1.9rem;line-height:1.3;margin:8px 0 6px}h2{font-size:1.4rem;margin:0 0 8px}
+p{margin:0 0 12px}.sub{color:var(--sub);font-size:.9rem}
+.card{background:var(--card);border:2px solid var(--ink);border-radius:18px;padding:18px;margin-bottom:14px;box-shadow:0 5px 0 var(--ink)}
+button{font:inherit;font-weight:800;cursor:pointer;color:var(--ink);background:var(--sun);border:2px solid var(--ink);border-radius:14px;padding:12px 18px;box-shadow:0 4px 0 var(--ink);width:100%;margin-top:10px}
+button:active{transform:translateY(3px);box-shadow:0 1px 0 var(--ink)}
+button.c{background:var(--coral);color:#fff}button.m{background:var(--mint)}button.g{background:#fff}
+input,select{font:inherit;padding:10px;border:2px solid var(--ink);border-radius:10px;background:#fff;color:var(--ink);width:100%;margin-bottom:8px}
+input:focus-visible,button:focus-visible,select:focus-visible{outline:4px solid var(--coral);outline-offset:2px}
+.big{font-size:2.6rem;font-weight:900;text-align:center;margin:18px 0;word-break:break-all;line-height:1.3}
+.clock{font-size:3rem;font-weight:900;text-align:center;font-variant-numeric:tabular-nums}
+.code{font-size:2.4rem;font-weight:900;letter-spacing:.25em;text-align:center}
+.rank{display:flex;justify-content:space-between;gap:8px;padding:8px 0;border-top:2px dashed var(--line)}.rank:first-of-type{border-top:0}
+.rank b{font-variant-numeric:tabular-nums}
+.stop{padding:48px 0;font-size:1.6rem}
+.hide .big{filter:blur(14px)}
+@media (prefers-reduced-motion:reduce){button:active{transform:none}}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+</head>
+<body>
+<main id="app"></main>
+<script>
+const $=s=>document.querySelector(s),app=$("#app");
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const pick=a=>a[Math.floor(Math.random()*a.length)];
+const shuffle=a=>{a=[...a];for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]]}return a};
+const PAIRS=[["カレー","シチュー"],["ラーメン","うどん"],["コンビニ","スーパー"],["サッカー","フットサル"],["スマホ","タブレット"],["夏休み","冬休み"],["遠足","修学旅行"],["ピアノ","キーボード"],["いちご","さくらんぼ"],["図書室","保健室"],["海","プール"],["電車","バス"],["ハンバーガー","サンドイッチ"],["えんぴつ","シャーペン"],["カラオケ","ゲームセンター"],["ポテトチップス","ポップコーン"],["体育祭","文化祭"],["映画館","遊園地"],["消しゴム","修正テープ"],["たこ焼き","お好み焼き"]];
+const THEMES=["ものの大きさ","食べ物のおいしさ","学校が楽しい度","こわさ","朝のねむさ","スピードの速さ","持っていたらうれしい度","ねだんの高さ","有名さ","ドキドキ度","あったかさ","うるささ"];
+const MIN={wolf:3,num:2,ten:1},TITLE={wolf:"ワードウルフ",num:"数字ならべ",ten:"ぴったり10秒"},MAXP=10,PRE="pgames-",CH="ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+const BASE=location.href.split("?")[0].split("#")[0];
+const G={name:"",code:(new URLSearchParams(location.search).get("room")||"").toUpperCase().slice(0,6),min:3,c1:"",c2:""};
+let isHost=false,peer=null,hostConn=null,H=null,tmr=null,tenRun=false,tenT0=0,last=null;
+const myName=()=>(G.name.trim()||(isHost?"ホスト":"ゲスト")).slice(0,12);
+
+/* ---------- 画面 ---------- */
+const leaveBtn=`<button class="g" data-a="leave">やめてホームに戻る</button>`;
+const R={
+entry:()=>`<h1>みんなで<br>パーティーゲーム</h1><p class="sub">URLを送るだけで、それぞれのスマホで遊べます。</p>
+<div class="card"><p><b>ニックネーム</b></p><input data-g="name" value="${esc(G.name)}" maxlength="12" placeholder="本名ではなくニックネームがおすすめ" aria-label="ニックネーム">
+${G.code?`<p>ルーム <b>${esc(G.code)}</b> に参加します</p><button class="c" data-a="join">参加する</button><button class="g" data-a="forget">ルームを作る側になる</button>`
+:`<button class="c" data-a="create">ルームを作る</button><p style="margin-top:16px"><b>友達のルームに入る</b></p><input data-g="code" value="${esc(G.code)}" maxlength="6" placeholder="ルームコード（4文字）" aria-label="ルームコード"><button class="m" data-a="join">参加する</button>`}
+<p class="sub" id="msg" role="alert"></p></div>
+<p class="sub">・チャット機能はありません。通話しながら遊ぶのがおすすめ。<br>・ルームコードは友達にだけ教えてね。<br>・名前以外の情報は集めません。</p>`,
+status:v=>`<h2>${esc(v.t)}</h2><p class="sub">しばらくお待ちください…</p>${leaveBtn}`,
+end:v=>`<h2>${esc(v.t)}</h2><button class="c" data-a="leave">ホームに戻る</button>`,
+lobby:v=>`<h2>ルーム</h2><div class="card"><div class="code" aria-label="ルームコード">${esc(v.code)}</div><button data-a="copy">招待リンクを送る・コピー</button><p class="sub" id="msg" role="alert" style="margin-top:8px"></p></div>
+<div class="card"><p><b>参加者（${v.names.length}人）</b></p>${v.names.map(n=>`<div class="rank"><span>${esc(n)}</span></div>`).join("")}</div>
+${v.host?`<div class="card"><p><b>ワードウルフの設定</b></p><select data-g="min" aria-label="話し合い時間">${[2,3,5].map(m=>`<option value="${m}" ${+G.min===m?"selected":""}>話し合い ${m}分</option>`).join("")}</select>
+<input data-g="c1" value="${esc(G.c1)}" placeholder="自分たちのお題A（なくてもOK）" maxlength="12"><input data-g="c2" value="${esc(G.c2)}" placeholder="自分たちのお題B" maxlength="12"></div>
+<p><b>ゲームを選ぶ</b></p>${["wolf","num","ten"].map(g=>`<button data-a="start" data-v="${g}">${TITLE[g]}（${MIN[g]}人〜）</button>`).join("")}`
+:`<p>ホストがゲームを選んでいます…</p>`}${leaveBtn}`,
+talk:v=>`<div id="box"><p class="sub" style="text-align:center">あなたのお題</p><div class="big">${esc(v.word)}</div></div>
+<button class="g" data-a="peek">お題を隠す / 見る</button><p>お題を言わずにヒントを出し合って、ウルフを探そう。</p><div class="clock" id="clk" role="timer"></div>${v.host?`<button class="c" data-a="toVote">投票へ進む</button>`:""}`,
+vote:v=>v.mine?`<h2>投票ずみ</h2><p>ほかの人を待っています（${v.got}/${v.total}）</p>${v.host?`<button class="c" data-a="finishVote">いま集計する</button>`:""}`
+:`<h2>ウルフはだれ？</h2>${v.opts.map(o=>`<button data-a="vote" data-v="${esc(o.id)}">${esc(o.name)}</button>`).join("")}<p class="sub" style="margin-top:10px">投票ずみ ${v.got}/${v.total}</p>`,
+wres:v=>`<h2>${v.caught?"ウルフをつかまえた！":"ウルフは逃げ切った！"}</h2><div class="card"><p>ウルフは…</p><div class="big">${esc(v.wolf)}</div><p>みんなのお題：<b>${esc(v.maj)}</b><br>ウルフのお題：<b>${esc(v.odd)}</b></p></div>
+<div class="card"><p><b>得票</b></p>${v.tally.map(t=>`<div class="rank"><span>${esc(t.name)}</span><b>${t.n}票</b></div>`).join("")}</div><p class="sub">ウルフがつかまっても、多数派のお題を当てたら逆転、にしてもOK。</p>${after(v)}`,
+ntalk:v=>`<p class="sub" style="text-align:center">あなたの数字（ほかの人に見せない）</p><div class="big">${v.num}</div><div class="card"><p>お題：<b>${esc(v.theme)}</b></p><p>数字は言わずに、たとえ話で伝えて、小さい順に並ぼう。</p></div>${v.host?`<button class="c" data-a="revealNum">並んだ！答え合わせ</button>`:`<p class="sub">ホストが答え合わせをします。</p>`}`,
+nres:v=>`<h2>答え合わせ</h2><p class="sub">お題：${esc(v.theme)}／小さい順</p><div class="card">${v.rows.map(r=>`<div class="rank"><span>${esc(r.name)}</span><b>${r.v}</b></div>`).join("")}</div>${after(v)}`,
+ten:v=>v.done?`<h2>送信しました</h2><div class="big">${v.mine.toFixed(2)}秒</div><p>ほかの人を待っています（${v.got}/${v.total}）</p>${v.host?`<button class="c" data-a="finishTen">いま集計する</button>`:""}`
+:tenRun?`<p class="sub" style="text-align:center">画面を見ずに10秒を数えよう</p><div class="big">…</div><button class="c stop" data-a="tenStop">10秒だ！止める</button>`
+:`<h2>ぴったり10秒</h2><p>全員がそれぞれのスマホで挑戦します。スタートを押したら、画面を見ずに10秒を数えて止めよう。</p><button class="m" data-a="tenGo">スタート</button>`,
+tres:v=>`<h2>けっか</h2><p class="sub">10秒にちかい順</p><div class="card">${v.rows.map((r,i)=>`<div class="rank"><span>${i+1}位 ${esc(r.name)}</span><b>${r.sec.toFixed(2)}秒</b></div>`).join("")}</div>${after(v)}`
+};
+const after=v=>v.host?`<button class="c" data-a="again">もう1回</button><button data-a="toLobby">ロビーに戻る</button>`:`<p class="sub">ホストの操作を待っています…</p>`;
+function render(v){
+  last=v;clearInterval(tmr);if(v.s!=="ten")tenRun=false;
+  app.innerHTML=R[v.s](v);window.scrollTo(0,0);
+  if(v.left!=null){const end=Date.now()+v.left,tick=()=>{const s=Math.max(0,Math.ceil((end-Date.now())/1000)),c=$("#clk");if(c)c.textContent=s?`${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`:"時間！投票しよう"};tick();tmr=setInterval(tick,250)}
+}
+const msg=t=>{const m=$("#msg");if(m)m.textContent=t};
+const status=t=>render({s:"status",t});
+const fail=t=>{try{peer&&peer.destroy()}catch(e){}render({s:"end",t})};
+
+/* ---------- 操作 ---------- */
+app.addEventListener("click",e=>{const b=e.target.closest("[data-a]");if(b)A[b.dataset.a](b.dataset.v)});
+app.addEventListener("input",e=>{const t=e.target;if(t.dataset.g)G[t.dataset.g]=t.dataset.g==="code"?t.value.toUpperCase():t.value});
+const send=m=>isHost?onAction("host",m):hostConn&&hostConn.send(m);
+const A={
+create(){if(typeof Peer==="undefined")return msg("通信ライブラリを読み込めませんでした。ネット接続を確認してください。");status("ルームを作っています");isHost=true;make(0)},
+join(){if(typeof Peer==="undefined")return msg("通信ライブラリを読み込めませんでした。ネット接続を確認してください。");
+  const code=G.code.trim().toUpperCase();if(code.length<4)return msg("ルームコードを入れてください。");joinRoom(code)},
+forget(){G.code="";render({s:"entry"})},
+leave(){try{peer&&peer.destroy()}catch(e){}location.href=BASE},
+copy(){const url=`${BASE}?room=${H?H.code:last.code}`;
+  if(navigator.share)navigator.share({title:"みんなでパーティーゲーム",text:"いっしょに遊ぼう！",url}).catch(()=>{});
+  else navigator.clipboard.writeText(url).then(()=>msg("リンクをコピーしました。友達に送ってね。"),()=>msg(url))},
+peek(){$("#box").classList.toggle("hide")},
+start(g){if(H.players.length<MIN[g])return msg(`${TITLE[g]}は${MIN[g]}人以上で遊べます。`);startGame(g)},
+again(){startGame(H.game)},
+toLobby(){H.phase="lobby";broadcast()},
+toVote(){H.votes={};H.phase="vote";broadcast()},
+vote(id){send({t:"vote",id})},
+finishVote(){finishVote()},
+revealNum(){H.phase="nres";broadcast()},
+tenGo(){tenT0=performance.now();tenRun=true;render(last)},
+tenStop(){const sec=(performance.now()-tenT0)/1000;tenRun=false;send({t:"ten",sec})},
+finishTen(){H.phase="tres";broadcast()}
+};
+
+/* ---------- ホスト側 ---------- */
+function make(n){
+  const code=Array.from({length:4},()=>CH[Math.floor(Math.random()*CH.length)]).join("");
+  const p=new Peer(PRE+code);let opened=false;
+  p.on("open",()=>{opened=true;peer=p;H={code,players:[{id:"host",name:myName()}],phase:"lobby",game:null,votes:{},secs:{}};broadcast()});
+  p.on("connection",onConn);
+  p.on("error",e=>{if(!opened&&e.type==="unavailable-id"&&n<5)make(n+1);else if(!opened)fail("ルームを作れませんでした。通信できる環境か確認してください。")});
+}
+function onConn(c){
+  c.on("data",m=>{
+    if(m.t==="join"){
+      if(!["lobby","wres","nres","tres"].includes(H.phase)||H.players.length>=MAXP){c.send({t:"busy"});setTimeout(()=>c.close(),300);return}
+      let n=String(m.name||"ゲスト").slice(0,12),k=2,base=n;while(H.players.some(p=>p.name===n))n=base+k++;
+      H.players.push({id:c.peer,name:n,conn:c});broadcast();return}
+    const p=H.players.find(x=>x.conn===c);if(p)onAction(p.id,m)});
+  const gone=()=>{const i=H.players.findIndex(x=>x.conn===c);if(i>=0){H.players.splice(i,1);check();broadcast()}};
+  c.on("close",gone);c.on("error",gone);
+}
+function onAction(pid,m){
+  if(m.t==="vote"&&H.phase==="vote"&&pid!==m.id&&H.players.some(p=>p.id===m.id)){H.votes[pid]=m.id;check()}
+  if(m.t==="ten"&&H.phase==="ten"&&H.secs[pid]==null&&isFinite(m.sec)){H.secs[pid]=Math.min(Math.max(+m.sec,0),600);check()}
+  broadcast();
+}
+function check(){
+  if(H.phase==="vote"&&H.players.length&&H.players.every(p=>H.votes[p.id]))finishVote();
+  if(H.phase==="ten"&&H.players.length&&H.players.every(p=>H.secs[p.id]!=null))H.phase="tres";
+}
+function finishVote(){
+  const n={};Object.values(H.votes).forEach(id=>n[id]=(n[id]||0)+1);
+  H.tally=H.players.map(p=>({id:p.id,name:p.name,n:n[p.id]||0})).sort((a,b)=>b.n-a.n);
+  const top=H.tally.filter(t=>t.n===H.tally[0].n);
+  H.caught=top.length===1&&top[0].id===H.w.wolf;H.phase="wres";broadcast();
+}
+function startGame(g){
+  H.game=g;
+  if(g==="wolf"){
+    let p=(G.c1.trim()&&G.c2.trim())?[G.c1.trim(),G.c2.trim()]:pick(PAIRS);if(Math.random()<.5)p=[p[1],p[0]];
+    H.w={maj:p[0],odd:p[1],wolf:pick(H.players).id};H.end=Date.now()+(+G.min||3)*60000;H.phase="talk";
+  }else if(g==="num"){
+    const nums=shuffle([...Array(100)].map((_,i)=>i+1));H.n={theme:pick(THEMES),v:{}};H.players.forEach((p,i)=>H.n.v[p.id]=nums[i]);H.phase="ntalk";
+  }else{H.secs={};H.phase="ten"}
+  broadcast();
+}
+function viewFor(p){
+  const host=p.id==="host",total=H.players.length;
+  switch(H.phase){
+    case"lobby":return{s:"lobby",code:H.code,names:H.players.map(x=>x.name),host};
+    case"talk":return{s:"talk",word:p.id===H.w.wolf?H.w.odd:H.w.maj,left:Math.max(0,H.end-Date.now()),host};
+    case"vote":return{s:"vote",opts:H.players.filter(x=>x.id!==p.id).map(x=>({id:x.id,name:x.name})),mine:H.votes[p.id],got:Object.keys(H.votes).length,total,host};
+    case"wres":return{s:"wres",tally:H.tally,wolf:H.players.find(x=>x.id===H.w.wolf)?.name||"（退出）",maj:H.w.maj,odd:H.w.odd,caught:H.caught,host};
+    case"ntalk":return{s:"ntalk",num:H.n.v[p.id],theme:H.n.theme,host};
+    case"nres":return{s:"nres",theme:H.n.theme,rows:H.players.map(x=>({name:x.name,v:H.n.v[x.id]})).filter(r=>r.v!=null).sort((a,b)=>a.v-b.v),host};
+    case"ten":return{s:"ten",done:H.secs[p.id]!=null,mine:H.secs[p.id]||0,got:Object.keys(H.secs).length,total,host};
+    case"tres":return{s:"tres",rows:H.players.filter(x=>H.secs[x.id]!=null).map(x=>({name:x.name,sec:H.secs[x.id]})).sort((a,b)=>Math.abs(a.sec-10)-Math.abs(b.sec-10)),host};
+  }
+}
+function broadcast(){H.players.forEach(p=>{const v=viewFor(p);if(p.id==="host")render(v);else try{p.conn.send({t:"view",v})}catch(e){}})}
+
+/* ---------- 参加者側 ---------- */
+function joinRoom(code){
+  status("ルームにつないでいます");isHost=false;
+  const p=new Peer();peer=p;
+  p.on("open",()=>{
+    const c=p.connect(PRE+code,{reliable:true});hostConn=c;
+    const to=setTimeout(()=>fail("つながりませんでした。コードを確認するか、Wi-Fiではなくモバイル回線で試してみてください。"),15000);
+    c.on("open",()=>{clearTimeout(to);c.send({t:"join",name:myName()})});
+    c.on("data",m=>{if(m.t==="view")render(m.v);else if(m.t==="busy")fail("いまゲーム中か満員のため入れません。終わるまで待ってね。")});
+    c.on("close",()=>render({s:"end",t:"ホストとの接続が切れました"}));
+  });
+  p.on("error",e=>fail(e.type==="peer-unavailable"?"そのコードのルームが見つかりません。":"通信エラーが起きました。もう一度試してください。"));
+}
+render({s:"entry"});
+</script>
+</body>
+</html>
